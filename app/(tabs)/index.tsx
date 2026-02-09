@@ -1,98 +1,166 @@
+import { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
-
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
+import { useRouter } from 'expo-router';
+import { getObjects } from '@/lib/api';
+import { useObjectsSocket } from '@/hooks/use-objects-socket';
+import type { ObjectItem } from '@/types/object';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+  const router = useRouter();
+  const colorScheme = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
+  const [objects, setObjects] = useState<ObjectItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
+  const fetchObjects = async () => {
+    try {
+      setError(null);
+      const list = await getObjects();
+      setObjects(list);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load objects');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchObjects();
+  };
+
+  useEffect(() => {
+    fetchObjects();
+  }, []);
+
+  useObjectsSocket(
+    (newObj) => {
+      setObjects((prev) => [newObj, ...prev]);
+    },
+    (id) => {
+      setObjects((prev) => prev.filter((o) => o._id !== id));
+    }
+  );
+
+  if (loading) {
+    return (
+      <ThemedView style={styles.centered}>
+        <ActivityIndicator size="large" />
+        <ThemedText style={styles.loadingText}>Loading…</ThemedText>
       </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
+    );
+  }
+
+  if (error) {
+    return (
+      <ThemedView style={styles.centered}>
+        <ThemedText style={styles.errorText}>{error}</ThemedText>
       </ThemedView>
-    </ParallaxScrollView>
+    );
+  }
+
+  return (
+    <ThemedView style={styles.container}>
+      <FlatList
+        data={objects}
+        keyExtractor={(item) => item._id}
+        contentContainerStyle={objects.length === 0 && styles.emptyList}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+        ListEmptyComponent={
+          <ThemedText style={styles.emptyText}>
+            No objects yet. Create one in the Create tab.
+          </ThemedText>
+        }
+        renderItem={({ item }) => (
+          <Pressable
+            style={({ pressed }) => [
+              styles.card,
+              { backgroundColor: colors.background === '#fff' ? '#f5f5f5' : '#252525' },
+              pressed && styles.cardPressed,
+            ]}
+            onPress={() => router.push(`/object/${item._id}`)}
+          >
+            <Image
+              source={{ uri: item.imageUrl }}
+              style={styles.cardImage}
+              contentFit="cover"
+            />
+            <View style={styles.cardContent}>
+              <ThemedText type="defaultSemiBold" numberOfLines={1} style={{ color: colors.text }}>
+                {item.title}
+              </ThemedText>
+              <ThemedText numberOfLines={2} style={[styles.description, { color: colors.text, opacity: 0.85 }]}>
+                {item.description}
+              </ThemedText>
+            </View>
+          </Pressable>
+        )}
+      />
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
+  container: {
+    flex: 1,
+  },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
+    padding: 20,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  loadingText: {
+    marginTop: 8,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  errorText: {
+    color: '#c00',
+    textAlign: 'center',
+  },
+  emptyList: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 20,
+  },
+  emptyText: {
+    textAlign: 'center',
+  },
+  card: {
+    marginHorizontal: 16,
+    marginVertical: 8,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  cardPressed: {
+    opacity: 0.9,
+  },
+  cardImage: {
+    width: '100%',
+    height: 160,
+    backgroundColor: '#ddd',
+  },
+  cardContent: {
+    padding: 12,
+  },
+  description: {
+    marginTop: 4,
+    opacity: 0.8,
   },
 });
